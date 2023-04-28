@@ -1,10 +1,12 @@
 import os
+import numpy as np
 import pickle
 from pydantic import BaseModel
 from typing import List, Dict
 
 import tiktoken
 
+from index.docs import VLScoreDoc
 from model.model import Model
 from model.factory import get_model
 from vectorstore.vectorstore import VectorStore
@@ -15,6 +17,7 @@ DEFAULT_VECTOR_FILE_MAX_ELEMENTS = 5000 # The max elements in one vector file
 MIN_CHUNK_SIZE_CHARS = 350  # The minimum size of each text chunk in characters
 MIN_CHUNK_LENGTH_TO_EMBED = 5  # Discard chunks shorter than this
 EMBEDDINGS_BATCH_SIZE = 128 # The number of embeddings to request at a time
+MIN_TOP_K = 5 # The minimum top_k to query from the vector store
 
 # Global tokenizer
 default_tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -26,14 +29,17 @@ class ChunkMetadata(BaseModel):
     length: int # the length of the chunk text
     label: int # the label of the chunk embedding in the vector store
 
+
 class ChunkId(BaseModel):
     doc_id: str
     offset: int
     length: int
 
+
 class VectorIndexMetadata(BaseModel):
     elements: int
     last_label: int
+
 
 class VectorIndex:
     store_dir: str # the dir where the index files will be stored
@@ -58,6 +64,7 @@ class VectorIndex:
     label_to_chunk_id: Dict[int, ChunkId]
     # the vector index metadata
     metadata: VectorIndexMetadata
+
 
     def __init__(
         self,
@@ -279,13 +286,76 @@ class VectorIndex:
         """
         raise NotImplementedError
 
-    def query(
-        self,
-        embeddings: List[List[float]],
-        top_k: int,
-    ) -> (List[List[int]], List[List[float]]):
+
+    def search(self, query_string: str, top_k: int) -> List[VLScoreDoc]:
         """
-        Take one or more embeddings and return the top_k embedding ids and
-        distances for each embedding.
+        Take a query string, get embedding for the query string, find the
+        similar doc chunks in the store, calculate the scores and return the
+        top_k docs.
+        The score for a doc is calculated based on the distance to the query
+        string embedding. If multiple chunks within a doc are close to the
+        query string embedding, the doc's score is the sum of the scores of
+        those chunks.
+
+        Return the top-k docs, sorted in descending order based on the score.
+        Note: the returned docs may be less than top_k, as multiple chunks may
+        belong to one doc.
         """
-        return self.store.query(embeddings, top_k)
+        texts: List[str] = []
+        texts.append(query_string)
+        embeddings = self.model.get_embeddings(texts)
+
+        # multiple chunks may belong to one doc. adjust top_k to get enough
+        # neighbors from the vector store. TODO is there a better way?
+        k = top_k
+        if k < MIN_TOP_K:
+            k = MIN_TOP_K
+
+        # check k with the current number of elements. Some store, such as
+        # hnswlib, throws RuntimeError if k > elements.
+        if k > self.metadata.elements:
+            k = self.metadata.elements
+
+        # query the vector store. The returned distances are sorted in the
+        # ascending order, e.g. lower distance means higher similarity.
+        labels, distances = self.store.query(embeddings, k)
+
+        # normalize the distances, simply use Min-Max Scaling.
+        # TODO may support other normalization algorithms.
+        # calculate max and min values along each row
+        max_distances = np.max(distances, axis=1)
+        min_distances = np.min(distances, axis=1)
+
+        # handle the case when max and min are equal for a row
+        equal_mask = (max_distances == min_distances)
+        # add 1 to the maximum value
+        max_distances[equal_mask] += 1
+
+        # calculate scores, higher scores for lower distances
+        scores = 1.0 - \
+            (distances - min_distances[:, np.newaxis]) / \
+            (max_distances[:, np.newaxis] - min_distances[:, np.newaxis])
+
+        # sum the scores for each doc.
+        # key: doc_id, value: sum of the scores
+        doc_scores: Dict[str, float] = {}
+        for i, label in enumerate(labels[0]):
+            score = scores[0][i]
+
+            chunk_id = self.label_to_chunk_id[label]
+            if chunk_id.doc_id in doc_scores:
+                # other chunk(s) in the doc are also close, sum the scores
+                score += doc_scores[chunk_id.doc_id]
+
+            doc_scores[chunk_id.doc_id] = score
+
+        # sort in the descending order based on the score
+        score_docs: List[VLScoreDoc] = []
+        for doc_id, score in doc_scores.items():
+            score_doc = VLScoreDoc(
+                doc_id=doc_id, score=score, vector_ratio=1.0)
+            score_docs.append(score_doc)
+
+        score_docs.sort(key=lambda s:s.score, reverse=True)
+
+        return score_docs

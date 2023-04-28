@@ -72,13 +72,7 @@ class TestVectorIndex:
 
     def test_index(self):
         # test index with 2 files, cover the mapping of doc ids and labels
-        ut_dir = "./tests/index/utdir-vectorindex"
-        if os.path.exists(ut_dir):
-            # remove the possible garbage by previous failed test
-            shutil.rmtree(ut_dir)
-        os.mkdir(ut_dir)
-
-        index = VectorIndex(ut_dir, "sentence_transformer", "hnswlib")
+        index = VectorIndex("./", "sentence_transformer", "hnswlib")
 
         # add the first file
         text = "A person is eating food."
@@ -101,6 +95,15 @@ class TestVectorIndex:
         assert doc_id1 == index.label_to_chunk_id[label1].doc_id
         assert 0 == index.label_to_chunk_id[label1].offset
         assert len(text)+1 == index.label_to_chunk_id[label1].length
+
+        # search
+        query_string = "A person is eating food."
+        top_k = 2
+        score_docs = index.search(query_string, top_k)
+        assert 1 == len(score_docs)
+        assert doc_id1 == score_docs[0].doc_id
+        assert 1.0 == score_docs[0].score
+        assert 1.0 == score_docs[0].vector_ratio
 
         # add the second file
         doc_path2 = "./tests/testfiles/chatgpt.txt"
@@ -132,9 +135,58 @@ class TestVectorIndex:
         for label in range(label1+1, len(index.label_to_chunk_id)):
             assert doc_id2 == index.label_to_chunk_id[label].doc_id
 
-        # save the vectors to file
+        # search
+        query_string = "A person is eating food."
+        top_k = 2
+        score_docs = index.search(query_string, top_k)
+        assert 2 == len(score_docs)
+        assert doc_id1 == score_docs[0].doc_id
+        assert doc_id2 == score_docs[1].doc_id
+        assert 1.0 == score_docs[0].score
+        assert 1.0 > score_docs[1].score
+        assert 1.0 == score_docs[0].vector_ratio
+        assert 1.0 == score_docs[1].vector_ratio
+
+
+    def test_save_load_index(self):
+        # test load index with 2 files
+        ut_dir = "./tests/index/utdir-vectorindex"
+        if os.path.exists(ut_dir):
+            # remove the possible garbage by previous failed test
+            shutil.rmtree(ut_dir)
+        os.mkdir(ut_dir)
+
+        # the first file
+        text = "A person is eating food."
+        doc_path1 = "./tests/testfiles/single_sentence.txt"
+        doc_id1 = "doc_id1"
+        doc1_chunks = 1
+        label1 = 1
+
+        # the second file
+        doc_path2 = "./tests/testfiles/chatgpt.txt"
+        doc_id2 = "doc_id2"
+        doc2_chunks = 28
+ 
+        # vector file version
         version = 1
-        index.save(version)
+
+        # create the vector file inside try, so VectorIndex is destructed,
+        # but hnswlib still complains, "Warning: Calling load_index for an
+        # already inited index.". Check it later.
+        try:
+            index = VectorIndex(ut_dir, "sentence_transformer", "hnswlib")
+
+            # add the first file
+            index.add(doc_path1, doc_id1)
+
+            # add the second file
+            index.add(doc_path2, doc_id2)
+
+            # save the vectors to file
+            index.save(version)
+        except:
+            assert False
 
         # load from file
         index1 = VectorIndex(ut_dir, "sentence_transformer", "hnswlib")
@@ -166,6 +218,18 @@ class TestVectorIndex:
         # verify doc2 chunk ids
         for label in range(label1+1, len(index1.label_to_chunk_id)):
             assert doc_id2 == index1.label_to_chunk_id[label].doc_id
+
+        # search
+        query_string = "A person is eating food."
+        top_k = 2
+        score_docs = index.search(query_string, top_k)
+        assert 2 == len(score_docs)
+        assert doc_id1 == score_docs[0].doc_id
+        assert doc_id2 == score_docs[1].doc_id
+        assert 1.0 == score_docs[0].score
+        assert 1.0 > score_docs[1].score
+        assert 1.0 == score_docs[0].vector_ratio
+        assert 1.0 == score_docs[1].vector_ratio
 
         # cleanup
         shutil.rmtree(ut_dir)

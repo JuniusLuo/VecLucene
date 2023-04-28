@@ -10,9 +10,11 @@ from org.apache.lucene.document import \
     Document, Field, NumericDocValuesField, StringField, TextField
 from org.apache.lucene.index import \
     DirectoryReader, IndexWriter, IndexWriterConfig, Term
+from org.apache.lucene.queryparser.classic import QueryParser
 from org.apache.lucene.search import IndexSearcher, TermQuery
 from org.apache.lucene.store import FSDirectory
 
+from index.docs import VLScoreDoc
 from index.vector_index import VectorIndex
 
 # the reserved field names for the doc
@@ -100,6 +102,7 @@ class Index:
         
         Return the document id.
         """
+        # TODO support embeddings for other fields, such as title, etc.
         # TODO support other type files, such as pdf, etc, e.g. extract text
         # from file, write to a temporary text file, and then pass the
         # temporary text file to this function.
@@ -164,3 +167,89 @@ class Index:
 
         # successfully commit both vector and lucene indexes
         self.vector_index_version += 1
+
+
+    def search(
+        self, query_string: str, top_k: int, vector_weight: float = 1.5,
+    ) -> List[VLScoreDoc]:
+        """
+        Take the query string, search over the doc content (text) and return
+        the top docs. The search will include both the traditional inverted
+        search and vector search.
+
+        Args:
+            vector_weight: the score weight for the vector score. Adjust
+            it to tune the score between vector search and traditional search.
+        """
+        # TODO
+        # - support searching other fields, such as title.
+        # - support more Lucene query abilities vs natural language search
+        #   like gmail. For example, user inputs "a query string. field:value",
+        #   automatically search the query string over all invert/vector
+        #   indexed fields, and search the specified field.
+        # - support retrieving the specified fields.
+        # - support pagination search.
+        # - etc.
+
+        # search the FIELD_DOC_TEXT only
+
+        # do vector search. skip normalization for vector scores, as
+        # vector_index normalizes the distances and then merges the scores
+        # for the chunks that belongs to the same doc.
+        vector_score_docs = self.vector_index.search(query_string, top_k)
+
+        # normalize the scores, simply use Min-Max Scaling.
+        # TODO may support other normalization algorithms.
+
+        # do traditional inverted search
+        analyzer = self.writer.getConfig().getAnalyzer()
+        parser = QueryParser(FIELD_DOC_TEXT, analyzer)
+        query = parser.parse(query_string)
+        invert_score_docs = self.searcher.search(query, top_k).scoreDocs
+        if len(invert_score_docs) == 0:
+            return vector_score_docs
+
+        # find docs in the inverted index, merge with the vector score docs
+        merged_score_docs: Dict[str, VLScoreDoc] = {}
+        # initialize with vector_score_docs
+        for score_doc in vector_score_docs:
+            merged_score_docs[score_doc.doc_id] = score_doc
+
+        # fetch doc ids and normalize scores, and merge
+        min_score = invert_score_docs[len(invert_score_docs)-1].score
+        max_min = invert_score_docs[0] - min_score
+        for score_doc in invert_score_docs:
+            # normalize score
+            if max_min == 0:
+                score = 1.0
+            else:
+                score = (score_doc.score - min_score) / max_min
+
+            # get doc id
+            doc = searcher.doc(score_doc.doc)
+            doc_id = doc.get(FIELD_DOC_ID)
+
+            if doc_id in merged_score_docs:
+                # vector search gets the same doc, merge the scores
+                vl_score_doc = merged_score_docs[doc_id]
+                score += vl_score_doc.score
+                vl_score_doc.vector_ratio = vl_score_doc.score / score
+                vl_score_doc.score = score
+                continue
+
+            # vector search does not get the doc, add it
+            vl_score_doc = VLScoreDoc(
+                doc_id=doc_id, score=score, vector_ratio=0.0)
+            merged_score_docs[doc_id] = vl_score_doc
+
+        # sort by scores
+        score_docs: List[VLScoreDoc] = []
+        for score_doc in merged_score_docs.values():
+            score_docs.append(score_doc)
+
+        score_docs.sort(key=lambda s:s.score)
+
+        if len(score_docs) > top_k:
+            return score_docs[:top_k]
+
+        return score_docs

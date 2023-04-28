@@ -19,7 +19,46 @@ class TestHnswlib():
         assert os.path.exists(index_path)
         os.remove(index_path)
 
-    def test_index(self):
+
+    def test_index_cosines_space(self):
+        self.verify_index_spaces("cosine")
+
+    def test_index_ip_space(self):
+        self.verify_index_spaces("ip")
+
+    def verify_index_spaces(self, space: str):
+        dim = 16
+        max_elements = 5
+        store = get_vector_store("hnswlib", dim, space, max_elements)
+
+        embeddings = np.float32(np.random.random((max_elements, dim)))
+        labels = np.arange(max_elements)
+
+        store.add(embeddings, labels)
+
+        query_embeddings: List[List[float]] = []
+        query_embeddings.append(embeddings[0])
+        qlabels, distances = store.query(
+            embeddings=query_embeddings, top_k=max_elements)
+
+        assert 1 == len(qlabels)
+        assert 1 == len(distances)
+        # verify all elements are returned
+        assert max_elements == len(qlabels[0])
+        assert max_elements == len(distances[0])
+        if space != "ip":
+            # inner product is not an actual metric. An element can be closer
+            # to some other element than to itself
+            assert labels[0] == qlabels[0][0]
+        qlabels[0].sort()
+        assert all([a == b for a, b in zip(qlabels[0], labels)])
+        # verify distances are sorted in the ascending order
+        sort_distance = distances[0].copy()
+        sort_distance.sort()
+        assert all([a == b for a, b in zip(distances[0], sort_distance)])
+
+
+    def test_save_load_index_l2_space(self):
         dim = 16
         max_elements = 5
         space = "l2"
@@ -38,13 +77,16 @@ class TestHnswlib():
         assert labels[0] == qlabels[0][0]
         assert 0.0 == distances[0][0]
 
+        query_embeddings: List[List[float]] = []
+        query_embeddings.append(embeddings[0])
         qlabels, distances = store.query(
-            embeddings=embeddings[0], top_k=max_elements)
+            embeddings=query_embeddings, top_k=max_elements)
         assert 1 == len(qlabels)
         assert 1 == len(distances)
         assert max_elements == len(qlabels[0])
         assert max_elements == len(distances[0])
         assert labels[0] == qlabels[0][0]
+        # l2 equation, d = sum((Ai-Bi)^2), the distance of exact match is 0
         assert 0.0 == distances[0][0]
         qlabels[0].sort()
         assert all([a == b for a, b in zip(qlabels[0], labels)])
@@ -73,8 +115,13 @@ class TestHnswlib():
         assert 0.0 == distances[0][0]
         qlabels[0].sort()
         assert all([a == b for a, b in zip(qlabels[0], labels)])
+        # verify distances are sorted in the ascending order
+        sort_distance = distances[0].copy()
+        sort_distance.sort()
+        assert all([a == b for a, b in zip(distances[0], sort_distance)])
 
         os.remove(index_path)
+
 
     def test_negative_cases(self):
         dim = 384

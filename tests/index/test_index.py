@@ -31,6 +31,15 @@ class TestIndex:
 
             doc_id1 = index.add(doc_path1, fields)
 
+            query_string = "A person is eating food."
+            top_k = 2
+            score_docs = index.search(query_string, top_k)
+            print(score_docs)
+            assert 1 == len(score_docs)
+            assert doc_id1 == score_docs[0].doc_id
+            # both vector store and lucene will return the doc
+            assert 0.0 != score_docs[0].vector_ratio
+
             index.commit()
         finally:
             index.close()

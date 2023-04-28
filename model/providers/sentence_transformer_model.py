@@ -10,8 +10,17 @@ class SentenceTransformerModel(Model):
     dim: int
 
     def __init__(self):
+        """
+        https://huggingface.co/blog/mteb, all-mpnet-base-v2 or all-MiniLM-L6-v2
+        provide a good balance between speed and performance.
+
+        https://www.sbert.net/docs/pretrained_models.html, test on a V100 GPU.
+        all-mpnet-base-v2, model size 420MB, encoding speed 2800 sentence/s.
+        all-MiniLM-L6-v2,  model size 80MB,  encoding speed 14200 sentence/s.
+        """
         # initialize with the default model
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
+
         # https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
         # By default, input text longer than 256 word pieces is truncated.
         self.max_token_size = 256

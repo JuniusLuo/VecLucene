@@ -32,5 +32,10 @@ class VectorStore(ABC):
         """
         Take one or more embeddings and return the top_k embedding ids and
         distances for each embedding.
+        This function follows the HNSWLIB query results that a larger distance
+        value indicates lower similarity, while a smaller distance value
+        indicates higher similarity. So the distances returned by this function
+        are arranged in ascending order, with the nearest neighbors appearing
+        first.
         """
         raise NotImplementedError
