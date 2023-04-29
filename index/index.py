@@ -7,11 +7,11 @@ import lucene
 from java.nio.file import Files, Path
 from org.apache.lucene.analysis import Analyzer
 from org.apache.lucene.document import \
-    Document, Field, NumericDocValuesField, StringField, TextField
+    Document, Field, StringField, TextField, StoredField
 from org.apache.lucene.index import \
     DirectoryReader, IndexWriter, IndexWriterConfig, Term
 from org.apache.lucene.queryparser.classic import QueryParser
-from org.apache.lucene.search import IndexSearcher, TermQuery
+from org.apache.lucene.search import IndexSearcher, ScoreDoc, TermQuery
 from org.apache.lucene.store import FSDirectory
 
 from index.docs import VLScoreDoc
@@ -32,6 +32,17 @@ SUBDIR_LUCENE = "lucene"
 SUBDIR_VECTOR = "vector"
 
 
+"""
+The Index class combines Lucene index with the vector index. It accepts a
+document, splits the document content to chunks, generates embeddings for each
+chunk using the specified model, persists the embeddings in the vector index
+and persists Lucene fields in the Lucene index. Search could search both Lucene
+and vector index, and merge the results.
+The Index class guarantees the consistency between Lucene index and vector
+index, and manages the lifecycle of the documents.
+TODO this class is not thread safe for concurrent write and read. The underline
+vector store, such as Hnswlib, does not support concurrent write and read.
+"""
 class Index:
     writer: IndexWriter
     searcher: IndexSearcher
@@ -60,7 +71,7 @@ class Index:
         # initialize the IndexWriter for Lucene
         fs_dir = FSDirectory.open(Path.of(lucene_dir))
         config = IndexWriterConfig(analyzer)
-        config.setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+        config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND)
         self.writer = IndexWriter(fs_dir, config)
 
         # initialize the IndexSearcher from the writer
@@ -72,7 +83,19 @@ class Index:
             vector_dir, model_provider, vector_store)
 
         # get the latest vector index version from Lucene
-        self.vector_index_version = 0
+        self.vector_index_version = self._get_vector_index_version()
+        if self.vector_index_version > 0:
+            # load the existing vectors
+            self.vector_index.load(self.vector_index_version)
+
+
+    def _get_vector_index_version(self) -> int:
+        reader = DirectoryReader.openIfChanged(self.searcher.getIndexReader())
+        if reader:
+            self.searcher.getIndexReader().close()
+            self.searcher = IndexSearcher(reader)
+
+        vector_index_version = 0
         term = Term(FIELD_DOC_ID, SYS_DOC_ID_VECTOR_INDEX)
         q = TermQuery(term)
         # doc may not exist if no doc is added to the index
@@ -80,10 +103,9 @@ class Index:
         if len(docs) == 1:
             # get the latest vector index version
             doc = self.searcher.doc(docs[0].doc)
-            self.vector_index_version = doc.get(FIELD_VECTOR_INDEX_VERSION)
-
-            # load the existing vectors
-            self.vector_index.load(self.vector_index_version)
+            field = doc.getField(FIELD_VECTOR_INDEX_VERSION)
+            vector_index_version = field.numericValue().longValue()
+        return vector_index_version
 
 
     def close(self):
@@ -102,6 +124,9 @@ class Index:
         
         Return the document id.
         """
+        # TODO support only a limited number of docs, e.g. less than
+        # vector_index.DEFAULT_VECTOR_FILE_MAX_ELEMENTS. One vector index
+        # element is one doc chunk.
         # TODO support embeddings for other fields, such as title, etc.
         # TODO support other type files, such as pdf, etc, e.g. extract text
         # from file, write to a temporary text file, and then pass the
@@ -146,12 +171,15 @@ class Index:
 
 
     def commit(self):
-        # flush the vector index. TODO support multiple index files.
+        # flush the vector index. TODO delete the older vector index files.
         self.vector_index.save(self.vector_index_version + 1)
 
         # update the latest vector index version as the special doc0 in Lucene
         doc = Document()
-        vector_version_field = NumericDocValuesField(
+        doc_id_field = StringField(
+            FIELD_DOC_ID, SYS_DOC_ID_VECTOR_INDEX, Field.Store.YES)
+        doc.add(doc_id_field)
+        vector_version_field = StoredField(
             FIELD_VECTOR_INDEX_VERSION, self.vector_index_version + 1)
         doc.add(vector_version_field)
         if self.vector_index_version == 0:
@@ -169,20 +197,14 @@ class Index:
         self.vector_index_version += 1
 
 
-    def search(
-        self, query_string: str, top_k: int, vector_weight: float = 1.5,
-    ) -> List[VLScoreDoc]:
+    def search(self, query_string: str, top_k: int) -> List[VLScoreDoc]:
         """
         Take the query string, search over the doc content (text) and return
         the top docs. The search will include both the traditional inverted
         search and vector search.
-
-        Args:
-            vector_weight: the score weight for the vector score. Adjust
-            it to tune the score between vector search and traditional search.
         """
         # TODO
-        # - support searching other fields, such as title.
+        # - support index and search other fields, such as title.
         # - support more Lucene query abilities vs natural language search
         #   like gmail. For example, user inputs "a query string. field:value",
         #   automatically search the query string over all invert/vector
@@ -191,22 +213,15 @@ class Index:
         # - support pagination search.
         # - etc.
 
-        # search the FIELD_DOC_TEXT only
+        # currently simply sum up the scores from the vector search and the
+        # lucene search.
 
-        # do vector search. skip normalization for vector scores, as
-        # vector_index normalizes the distances and then merges the scores
-        # for the chunks that belongs to the same doc.
+        # do vector search
         vector_score_docs = self.vector_index.search(query_string, top_k)
 
-        # normalize the scores, simply use Min-Max Scaling.
-        # TODO may support other normalization algorithms.
-
         # do traditional inverted search
-        analyzer = self.writer.getConfig().getAnalyzer()
-        parser = QueryParser(FIELD_DOC_TEXT, analyzer)
-        query = parser.parse(query_string)
-        invert_score_docs = self.searcher.search(query, top_k).scoreDocs
-        if len(invert_score_docs) == 0:
+        lucene_score_docs = self._search_lucene(query_string, top_k)
+        if len(lucene_score_docs) == 0:
             return vector_score_docs
 
         # find docs in the inverted index, merge with the vector score docs
@@ -215,31 +230,22 @@ class Index:
         for score_doc in vector_score_docs:
             merged_score_docs[score_doc.doc_id] = score_doc
 
-        # fetch doc ids and normalize scores, and merge
-        min_score = invert_score_docs[len(invert_score_docs)-1].score
-        max_min = invert_score_docs[0] - min_score
-        for score_doc in invert_score_docs:
-            # normalize score
-            if max_min == 0:
-                score = 1.0
-            else:
-                score = (score_doc.score - min_score) / max_min
-
+        for score_doc in lucene_score_docs:
             # get doc id
-            doc = searcher.doc(score_doc.doc)
+            doc = self.searcher.doc(score_doc.doc)
             doc_id = doc.get(FIELD_DOC_ID)
 
             if doc_id in merged_score_docs:
-                # vector search gets the same doc, merge the scores
+                # vector search gets the same doc, sum up the scores
                 vl_score_doc = merged_score_docs[doc_id]
-                score += vl_score_doc.score
+                score = score_doc.score + vl_score_doc.score
                 vl_score_doc.vector_ratio = vl_score_doc.score / score
                 vl_score_doc.score = score
                 continue
 
             # vector search does not get the doc, add it
             vl_score_doc = VLScoreDoc(
-                doc_id=doc_id, score=score, vector_ratio=0.0)
+                doc_id=doc_id, score=score_doc.score, vector_ratio=0.0)
             merged_score_docs[doc_id] = vl_score_doc
 
         # sort by scores
@@ -247,9 +253,23 @@ class Index:
         for score_doc in merged_score_docs.values():
             score_docs.append(score_doc)
 
-        score_docs.sort(key=lambda s:s.score)
+        score_docs.sort(key=lambda s:s.score, reverse=True)
 
         if len(score_docs) > top_k:
             return score_docs[:top_k]
 
         return score_docs
+
+
+    def _search_lucene(self, query_string: str, top_k: int) -> List[ScoreDoc]:
+        # TODO support concurrent reads
+        reader = DirectoryReader.openIfChanged(self.searcher.getIndexReader())
+        if reader:
+            self.searcher.getIndexReader().close()
+            self.searcher = IndexSearcher(reader)
+
+        analyzer = self.writer.getConfig().getAnalyzer()
+        parser = QueryParser(FIELD_DOC_TEXT, analyzer)
+        query = parser.parse(query_string)
+
+        return self.searcher.search(query, top_k).scoreDocs

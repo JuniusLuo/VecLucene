@@ -52,10 +52,6 @@ class TestHnswlib():
             assert labels[0] == qlabels[0][0]
         qlabels[0].sort()
         assert all([a == b for a, b in zip(qlabels[0], labels)])
-        # verify distances are sorted in the ascending order
-        sort_distance = distances[0].copy()
-        sort_distance.sort()
-        assert all([a == b for a, b in zip(distances[0], sort_distance)])
 
 
     def test_save_load_index_l2_space(self):
@@ -115,10 +111,6 @@ class TestHnswlib():
         assert 0.0 == distances[0][0]
         qlabels[0].sort()
         assert all([a == b for a, b in zip(qlabels[0], labels)])
-        # verify distances are sorted in the ascending order
-        sort_distance = distances[0].copy()
-        sort_distance.sort()
-        assert all([a == b for a, b in zip(distances[0], sort_distance)])
 
         os.remove(index_path)
 

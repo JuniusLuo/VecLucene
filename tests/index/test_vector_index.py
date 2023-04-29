@@ -102,7 +102,7 @@ class TestVectorIndex:
         score_docs = index.search(query_string, top_k)
         assert 1 == len(score_docs)
         assert doc_id1 == score_docs[0].doc_id
-        assert 1.0 == score_docs[0].score
+        assert score_docs[0].score > 0.9 # very high score
         assert 1.0 == score_docs[0].vector_ratio
 
         # add the second file
@@ -142,8 +142,19 @@ class TestVectorIndex:
         assert 2 == len(score_docs)
         assert doc_id1 == score_docs[0].doc_id
         assert doc_id2 == score_docs[1].doc_id
-        assert 1.0 == score_docs[0].score
-        assert 1.0 > score_docs[1].score
+        assert score_docs[0].score > 0.9 # doc1 has high score
+        assert score_docs[1].score < 0.5 # doc2 has low score
+        assert 1.0 == score_docs[0].vector_ratio
+        assert 1.0 == score_docs[1].vector_ratio
+
+        # search a unrelated string
+        query_string = "a beautiful sky"
+        top_k = 2
+        score_docs = index.search(query_string, top_k)
+        assert 2 == len(score_docs)
+        # both doc1 and doc2 have low score
+        assert score_docs[0].score < 0.5
+        assert score_docs[1].score < 0.5
         assert 1.0 == score_docs[0].vector_ratio
         assert 1.0 == score_docs[1].vector_ratio
 
@@ -226,8 +237,19 @@ class TestVectorIndex:
         assert 2 == len(score_docs)
         assert doc_id1 == score_docs[0].doc_id
         assert doc_id2 == score_docs[1].doc_id
-        assert 1.0 == score_docs[0].score
-        assert 1.0 > score_docs[1].score
+        assert score_docs[0].score > 0.9 # doc1 has high score
+        assert score_docs[1].score < 0.5 # doc2 has low score
+        assert 1.0 == score_docs[0].vector_ratio
+        assert 1.0 == score_docs[1].vector_ratio
+
+        # search a unrelated string
+        query_string = "a beautiful sky"
+        top_k = 2
+        score_docs = index.search(query_string, top_k)
+        assert 2 == len(score_docs)
+        # both doc1 and doc2 have low score
+        assert score_docs[0].score < 0.5
+        assert score_docs[1].score < 0.5
         assert 1.0 == score_docs[0].vector_ratio
         assert 1.0 == score_docs[1].vector_ratio
 

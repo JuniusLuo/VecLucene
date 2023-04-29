@@ -9,10 +9,10 @@ import tiktoken
 from index.docs import VLScoreDoc
 from model.model import Model
 from model.factory import get_model
-from vectorstore.vectorstore import VectorStore
+from vectorstore.vectorstore import Space, VectorStore
 from vectorstore.factory import get_vector_store
 
-DEFAULT_SPACE = "cosine" # The default space
+DEFAULT_SPACE = Space.l2 # The default space
 DEFAULT_VECTOR_FILE_MAX_ELEMENTS = 5000 # The max elements in one vector file
 MIN_CHUNK_SIZE_CHARS = 350  # The minimum size of each text chunk in characters
 MIN_CHUNK_LENGTH_TO_EMBED = 5  # Discard chunks shorter than this
@@ -51,6 +51,7 @@ class VectorIndex:
 
     model: Model # the model to get the embeddings for text
 
+    space: Space
     store: VectorStore # the vector store to store the embeddings
 
     # the underline vector store usually supports int as label. maintain the
@@ -76,9 +77,11 @@ class VectorIndex:
         self.tokenizer = default_tokenizer
         self.model = get_model(model_provider)
         dim = self.model.get_dim()
-        # TODO support more elements
+        # default max elements. TODO support more elements
+        max_elements = DEFAULT_VECTOR_FILE_MAX_ELEMENTS
+        self.space = DEFAULT_SPACE
         self.store = get_vector_store(
-            vector_store, dim, DEFAULT_SPACE, DEFAULT_VECTOR_FILE_MAX_ELEMENTS)
+            vector_store, dim, self.space, max_elements)
         self.doc_id_to_metas = {}
         self.label_to_chunk_id ={}
         self.metadata = VectorIndexMetadata(elements=0, last_label=0)
@@ -316,46 +319,78 @@ class VectorIndex:
         if k > self.metadata.elements:
             k = self.metadata.elements
 
-        # query the vector store. The returned distances are sorted in the
-        # ascending order, e.g. lower distance means higher similarity.
+        # query the vector store
         labels, distances = self.store.query(embeddings, k)
 
-        # normalize the distances, simply use Min-Max Scaling.
-        # TODO may support other normalization algorithms.
-        # calculate max and min values along each row
-        max_distances = np.max(distances, axis=1)
-        min_distances = np.min(distances, axis=1)
-
-        # handle the case when max and min are equal for a row
-        equal_mask = (max_distances == min_distances)
-        # add 1 to the maximum value
-        max_distances[equal_mask] += 1
-
-        # calculate scores, higher scores for lower distances
-        scores = 1.0 - \
-            (distances - min_distances[:, np.newaxis]) / \
-            (max_distances[:, np.newaxis] - min_distances[:, np.newaxis])
-
-        # sum the scores for each doc.
-        # key: doc_id, value: sum of the scores
-        doc_scores: Dict[str, float] = {}
-        for i, label in enumerate(labels[0]):
-            score = scores[0][i]
-
-            chunk_id = self.label_to_chunk_id[label]
-            if chunk_id.doc_id in doc_scores:
-                # other chunk(s) in the doc are also close, sum the scores
-                score += doc_scores[chunk_id.doc_id]
-
-            doc_scores[chunk_id.doc_id] = score
+        # convert distances to scores
+        if self.space == Space.l2:
+            doc_ids, scores = self._l2_distance_to_scores(
+                labels[0], distances[0])
+        else:
+            doc_ids, scores = self._ip_distance_to_scores(
+                labels[0], distances[0])
 
         # sort in the descending order based on the score
         score_docs: List[VLScoreDoc] = []
-        for doc_id, score in doc_scores.items():
+        for i, doc_id in enumerate(doc_ids):
             score_doc = VLScoreDoc(
-                doc_id=doc_id, score=score, vector_ratio=1.0)
+                doc_id=doc_id, score=scores[i], vector_ratio=1.0)
             score_docs.append(score_doc)
 
         score_docs.sort(key=lambda s:s.score, reverse=True)
 
         return score_docs
+
+
+    def _l2_distance_to_scores(
+        self, labels: List[int], distances: List[float],
+    ) -> (List[str], List[float]):
+        """
+        Convert the l2 distances to the scores.
+        Return the list of doc ids and scores.
+        """
+        # For the L2 distance, lower distance means closer.
+        # Get the lowest distance for each doc.
+        # key: doc_id, value: the lowest distance for the chunk(s) of one doc
+        doc_distances: Dict[str, float] = {}
+        for i, label in enumerate(labels):
+            distance = distances[i]
+
+            chunk_id = self.label_to_chunk_id[label]
+            # update distance if doc_id is not included or has lower distance
+            if (chunk_id.doc_id not in doc_distances) or \
+                (distance < doc_distances[chunk_id.doc_id]):
+                doc_distances[chunk_id.doc_id] = distance
+
+        # convert distances to scores
+        scores: List[float] = []
+        for distance in doc_distances.values():
+            scores.append(1 / (1 + distance))
+
+        return doc_distances.keys(), scores
+
+
+    def _ip_distance_to_scores(
+        self, labels: List[int], distances: List[float],
+    ) -> (List[str], List[float]):
+        """
+        Convert the ip or cosine distances to the scores.
+        Return the list of doc ids and scores.
+        """
+        # For the ip or cosine distances, higher distance means closer.
+        # Get the highest distance for each doc.
+        # key: doc_id, value: the highest distance for the chunk(s) of one doc
+        doc_distances: Dict[str, float] = {}
+        for i, label in enumerate(labels):
+            distance = distances[i]
+            chunk_id = self.label_to_chunk_id[label]
+            if (chunk_id.doc_id not in doc_distances) or \
+                (distance > doc_distances[chunk_id.doc_id]):
+                doc_distances[chunk_id.doc_id] = distance
+
+        # convert distances to scores
+        scores: List[float] = []
+        for distance in doc_distances.values():
+            scores.append((1 + distance) / 2)
+
+        return doc_distances.keys(), scores

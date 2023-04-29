@@ -1,5 +1,15 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import List
+
+class Space(str, Enum):
+    l2 = "l2" # L2/Euclidean
+    ip = "ip" # inner/dot product
+    # The embedding model usually generates the normalized vectors. The cosine
+    # similarity similarity is a dot product on normalized vectors. Usually
+    # would not need to use cosine.
+    cosine = "cosine"
+
 
 class VectorStore(ABC):
     @abstractmethod
@@ -32,10 +42,8 @@ class VectorStore(ABC):
         """
         Take one or more embeddings and return the top_k embedding ids and
         distances for each embedding.
-        This function follows the HNSWLIB query results that a larger distance
-        value indicates lower similarity, while a smaller distance value
-        indicates higher similarity. So the distances returned by this function
-        are arranged in ascending order, with the nearest neighbors appearing
-        first.
+        The distances are the original distances defined by the space, such as
+        L2, inner/dot product, etc. The vector store provider should return the
+        original distances.
         """
         raise NotImplementedError
