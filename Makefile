@@ -1,7 +1,7 @@
 
-.PHONY: test
 test:
 	#PYTHONPATH=. pytest # or python3 -m pytest
+	# add -s to print to console, add --log-cli-level=DEBUG to show debug logs
 	python3 -m pytest tests/model/
 	python3 -m pytest tests/vectorstore/
 	python3 -m pytest tests/index/test_vector_index.py
@@ -12,3 +12,8 @@ test:
 	# test only.
 	python3 -m pytest --disable-warnings tests/index/test_index.py
 
+PYTHON := python3
+site_packages_path := $(shell $(PYTHON) -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+coverage:
+	coverage run --omit "$(site_packages_path)/*" -m pytest --disable-warnings
+	coverage report --omit "$(site_packages_path)/*"

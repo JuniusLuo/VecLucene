@@ -1,8 +1,8 @@
 import os
-import io
+import logging
+import lucene
 from typing import List
 import uuid
-import lucene
 
 from java.nio.file import Files, Path
 from org.apache.lucene.analysis import Analyzer
@@ -44,6 +44,7 @@ TODO this class is not thread safe for concurrent write and read. The underline
 vector store, such as Hnswlib, does not support concurrent write and read.
 """
 class Index:
+    index_dir: str
     writer: IndexWriter
     searcher: IndexSearcher
 
@@ -73,6 +74,7 @@ class Index:
         config = IndexWriterConfig(analyzer)
         config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND)
         self.writer = IndexWriter(fs_dir, config)
+        self.index_dir = index_dir
 
         # initialize the IndexSearcher from the writer
         reader = DirectoryReader.open(self.writer)
@@ -88,6 +90,9 @@ class Index:
             # load the existing vectors
             self.vector_index.load(self.vector_index_version)
 
+        logging.info(f"Initialize the index {index_dir}, "
+                     f"vector_index_version={self.vector_index_version}")
+
 
     def _get_vector_index_version(self) -> int:
         reader = DirectoryReader.openIfChanged(self.searcher.getIndexReader())
@@ -95,12 +100,12 @@ class Index:
             self.searcher.getIndexReader().close()
             self.searcher = IndexSearcher(reader)
 
+        # doc may not exist if no doc is added to the index
         vector_index_version = 0
         term = Term(FIELD_DOC_ID, SYS_DOC_ID_VECTOR_INDEX)
         q = TermQuery(term)
-        # doc may not exist if no doc is added to the index
         docs = self.searcher.search(q, 1).scoreDocs
-        if len(docs) == 1:
+        if len(docs) > 0:
             # get the latest vector index version
             doc = self.searcher.doc(docs[0].doc)
             field = doc.getField(FIELD_VECTOR_INDEX_VERSION)
@@ -115,6 +120,7 @@ class Index:
         """
         self.writer.close()
         self.searcher.getIndexReader().close()
+        logging.info("Close the index")
 
 
     def add(self, doc_path: str, fields: List[Field]) -> str:
@@ -150,6 +156,8 @@ class Index:
 
         # add the doc to Lucene
         self._add_to_lucene(doc_path, fields)
+
+        logging.debug(f"add doc id={doc_id} to index")
         return doc_id
 
 
@@ -195,6 +203,8 @@ class Index:
 
         # successfully commit both vector and lucene indexes
         self.vector_index_version += 1
+        logging.info(f"Commit the index {self.index_dir}, "
+                     f"vector_index_version={self.vector_index_version}")
 
 
     def search(self, query_string: str, top_k: int) -> List[VLScoreDoc]:
@@ -222,6 +232,8 @@ class Index:
         # do traditional inverted search
         lucene_score_docs = self._search_lucene(query_string, top_k)
         if len(lucene_score_docs) == 0:
+            logging.debug(f"only find vector docs for query={query_string}, "
+                          f"{vector_score_docs}")
             return vector_score_docs
 
         # find docs in the inverted index, merge with the vector score docs
@@ -254,6 +266,9 @@ class Index:
             score_docs.append(score_doc)
 
         score_docs.sort(key=lambda s:s.score, reverse=True)
+
+        logging.debug("merge vector and lucene search docs for "
+                      f"query={query_string}, {score_docs}")
 
         if len(score_docs) > top_k:
             return score_docs[:top_k]

@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 import pickle
 from pydantic import BaseModel
@@ -154,6 +155,9 @@ class VectorIndex:
         """
         # get embeddings for the doc text
         chunk_embeddings, chunk_metas = self._get_embeddings(doc_path)
+
+        logging.debug(f"get {len(chunk_embeddings)} embeddings for "
+                      f"doc {doc_id}, last_label={self.metadata.last_label}")
 
         if len(chunk_embeddings) == 0:
             # doc has no content, return

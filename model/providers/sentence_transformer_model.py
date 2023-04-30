@@ -44,12 +44,7 @@ class SentenceTransformerModel(Model):
         """
         Takes in a list of texts and returns a list of embeddings for each text.
         """
-        embeddings: List[List[float]] = []
-        for text in texts:
-            embedding = self.model.encode(text)
-            embeddings.append(embedding)
-
-        return embeddings
+        return self.model.encode(texts)
 
     def set_model(self, model_name: str, max_token_size: int, dim: int):
         """
