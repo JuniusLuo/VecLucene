@@ -9,9 +9,17 @@ from org.apache.lucene.document import Field, StringField
 
 from index.index import Index
 
-class TestIndex:
+class TestSentenceTransformerWithIndex:
     def test_index(self):
-        ut_dir = "./tests/index/utdir-index"
+        t = IndexAndSearch()
+        t.index_docs_and_search(
+            "./tests/index/", "sentence_transformer", "hnswlib")
+
+class IndexAndSearch:
+    def index_docs_and_search(
+        self, base_dir: str, model_name: str, vector_store: str,
+    ):
+        ut_dir = os.path.join(base_dir, "utdir-index")
         if os.path.exists(ut_dir):
             # remove the possible garbage by previous failed test
             shutil.rmtree(ut_dir)
@@ -20,7 +28,7 @@ class TestIndex:
         lucene.initVM(vmargs=['-Djava.awt.headless=true'])
 
         analyzer = StandardAnalyzer()
-        index = Index(ut_dir, analyzer, "sentence_transformer", "hnswlib")
+        index = Index(ut_dir, analyzer, model_name, vector_store)
 
         try:
             # step1: add the first file
@@ -84,7 +92,7 @@ class TestIndex:
             index.close()
 
             # step3: reload index
-            index = Index(ut_dir, analyzer, "sentence_transformer", "hnswlib")
+            index = Index(ut_dir, analyzer, model_name, vector_store)
             assert 2 == index.vector_index_version
 
             # search lucene only

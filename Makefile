@@ -12,6 +12,12 @@ test:
 	# test only.
 	python3 -m pytest --disable-warnings tests/index/test_index.py
 
+test_openai:
+	# please export your openai key first, OPENAI_API_KEY=your_key
+	python3 -m pytest tests/openai/test_model_embedding.py
+	python3 -m pytest --disable-warnings tests/openai/test_index.py
+
+
 PYTHON := python3
 site_packages_path := $(shell $(PYTHON) -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
 coverage:

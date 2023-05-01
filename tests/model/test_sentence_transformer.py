@@ -5,7 +5,6 @@ from typing import List
 import numpy as np
 
 from model.factory import get_model
-#from model.providers.sentence_transformer_model import SentenceTransformerModel
 
 class TestSentTransformerModel():
     def test_embeddings(self):
@@ -50,3 +49,7 @@ class TestSentTransformerModel():
         assert stmodel.get_dim() == len(embeddings[0])
         dur = time.monotonic() - start
         print(f"get embeddings time: {dur}")
+
+    def test_unsupported_model(self):
+        with pytest.raises(ValueError):
+            get_model("unknown_model")
