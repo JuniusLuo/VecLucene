@@ -1,4 +1,5 @@
 import os
+import logging
 import pytest
 import time
 
@@ -16,14 +17,14 @@ class TestOpenAIEmbeddingModel():
                      'A person is riding a white horse on an enclosed ground.']
 
         # example run time on a MacBook.
-        # run the test first time, get embeddings time: 0.48015683237463236
-        # run the second time, get embeddings time: 0.25255241710692644
+        # run the test first time, get embeddings time: 0.48015683237463236s
+        # run the second time, get embeddings time: 0.25255241710692644s
         start = time.monotonic()
         embeddings = m.get_embeddings(sentences)
         assert len(sentences) == len(embeddings)
         assert m.get_dim() == len(embeddings[0])
         dur = time.monotonic() - start
-        print(f"get embeddings time: {dur}")
+        logging.info(f"openai_embedding, get embeddings time: {dur}s")
 
         with pytest.raises(NotImplementedError):
             m.set_model("model", 1, 1)

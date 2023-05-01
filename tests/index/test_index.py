@@ -1,6 +1,8 @@
 import os
+import logging
 import lucene
 import pytest
+import time
 from typing import List
 import shutil
 
@@ -11,11 +13,11 @@ from index.index import Index
 
 class TestSentenceTransformerWithIndex:
     def test_index(self):
-        t = IndexAndSearch()
+        t = IndexAndSearchTest()
         t.index_docs_and_search(
             "./tests/index/", "sentence_transformer", "hnswlib")
 
-class IndexAndSearch:
+class IndexAndSearchTest:
     def index_docs_and_search(
         self, base_dir: str, model_name: str, vector_store: str,
     ):
@@ -39,21 +41,24 @@ class IndexAndSearch:
 
             doc_id1 = index.add(doc_path1, fields)
 
-            # search lucene only
+            # search lucene
             query_string = "A person is eating food."
-            top_k = 2
-            lucene_score_docs = index._search_lucene(query_string, top_k)
+            top_k = 3
+            start = time.monotonic()
+            lucene_score_docs = index.lucene_search(query_string, top_k)
+            dur = time.monotonic() - start
+            logging.info(f"1 doc, lucene search time: {dur}s")
             assert 1 == len(lucene_score_docs)
-            assert 0 == lucene_score_docs[0].doc
+            assert doc_id1 == lucene_score_docs[0].doc_id
 
-            # search both lucene and vector index
-            score_docs = index.search(query_string, top_k)
-            assert 1 == len(score_docs)
-            assert doc_id1 == score_docs[0].doc_id
-            # both vector store and lucene will return the doc
-            assert score_docs[0].vector_ratio < 1.0
-            assert score_docs[0].vector_ratio > 0.5
-            assert score_docs[0].score > 1.0
+            # search vector index
+            start = time.monotonic()
+            vector_score_docs = index.vector_search(query_string, top_k)
+            dur = time.monotonic() - start
+            logging.info(f"1 doc, vector search time: {dur}s")
+            assert 1 == len(vector_score_docs)
+            assert doc_id1 == vector_score_docs[0].doc_id
+            assert vector_score_docs[0].score > 0.9
 
             # commit and verify the vector index version
             index.commit()
@@ -70,19 +75,39 @@ class IndexAndSearch:
 
             # search lucene only
             query_string = "A person is eating food."
-            top_k = 2
-            lucene_score_docs = index._search_lucene(query_string, top_k)
+            top_k = 3
+            start = time.monotonic()
+            lucene_score_docs = index.lucene_search(query_string, top_k)
+            dur = time.monotonic() - start
+            logging.info(f"2 docs, lucene search time: {dur}s")
             assert 2 == len(lucene_score_docs)
 
-            # search both lucene and vector index
-            score_docs = index.search(query_string, top_k)
-            assert 2 == len(score_docs)
-            assert doc_id1 == score_docs[0].doc_id
-            assert doc_id2 == score_docs[1].doc_id
-            # both vector store and lucene will return the doc
-            assert score_docs[0].vector_ratio < 1.0
-            assert score_docs[1].vector_ratio < 1.0
-            assert score_docs[0].score > 2.0
+            # search vector index
+            start = time.monotonic()
+            vector_score_docs = index.vector_search(query_string, top_k)
+            dur = time.monotonic() - start
+            logging.info(f"2 docs, vector search time: {dur}s")
+            # sentence_transformer returns:
+            # [DocChunkScore(doc_id1, offset=0, length=25, score=1.0),
+            #  DocChunkScore(doc_id2, offset=15234, length=1172, score=0.34),
+            #  DocChunkScore(doc_id2, offset=2219, length=1182, score=0.34)]
+            # openai returns, open file, seek and read, the text looks not
+            # related to the query_string, not sure why openai scores 0.63
+            # [DocChunkScore(doc_id1, offset=0, length=25, score=1.0),
+            #  DocChunkScore(doc_id2, offset=15234, length=1172, score=0.63),
+            #  DocChunkScore(doc_id2, offset=16406, length=1272, score=0.63)]
+            #logging.info(f"=== {vector_score_docs}")
+            assert 3 == len(vector_score_docs)
+            assert doc_id1 == vector_score_docs[0].doc_id
+            assert doc_id2 == vector_score_docs[1].doc_id
+            assert doc_id2 == vector_score_docs[2].doc_id
+            assert vector_score_docs[0].score > 0.9
+            if model_name == "sentence_transformer":
+                assert vector_score_docs[1].score < 0.5 # doc2 has low score
+                assert vector_score_docs[2].score < 0.5 # doc2 has low score
+            if vector_score_docs[1].score > 0.5:
+                score = vector_score_docs[1].score
+                logging.info(f"{model_name} scores high {score}")
 
             # commit and verify the vector index version
             index.commit()
@@ -97,19 +122,26 @@ class IndexAndSearch:
 
             # search lucene only
             query_string = "A person is eating food."
-            top_k = 2
-            lucene_score_docs = index._search_lucene(query_string, top_k)
+            top_k = 3
+            start = time.monotonic()
+            lucene_score_docs = index.lucene_search(query_string, top_k)
+            dur = time.monotonic() - start
+            logging.info(f"2 docs, reload, lucene search time: {dur}s")
             assert 2 == len(lucene_score_docs)
 
-            # search both lucene and vector index
-            score_docs = index.search(query_string, top_k)
-            assert 2 == len(score_docs)
-            assert doc_id1 == score_docs[0].doc_id
-            assert doc_id2 == score_docs[1].doc_id
-            # both vector store and lucene will return the doc
-            assert score_docs[0].vector_ratio < 1.0
-            assert score_docs[1].vector_ratio < 1.0
-            assert score_docs[0].score > 2.0
+            # search vector index
+            start = time.monotonic()
+            vector_score_docs = index.vector_search(query_string, top_k)
+            dur = time.monotonic() - start
+            logging.info(f"2 docs, reload, vector search time: {dur}s")
+            assert 3 == len(vector_score_docs)
+            assert doc_id1 == vector_score_docs[0].doc_id
+            assert doc_id2 == vector_score_docs[1].doc_id
+            assert doc_id2 == vector_score_docs[2].doc_id
+            assert vector_score_docs[0].score > 0.9
+            if model_name == "sentence_transformer":
+                assert vector_score_docs[1].score < 0.5 # doc2 has low score
+                assert vector_score_docs[2].score < 0.5 # doc2 has low score
 
         finally:
             index.close()

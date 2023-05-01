@@ -98,12 +98,11 @@ class TestVectorIndex:
 
         # search
         query_string = "A person is eating food."
-        top_k = 2
-        score_docs = index.search(query_string, top_k)
-        assert 1 == len(score_docs)
-        assert doc_id1 == score_docs[0].doc_id
-        assert score_docs[0].score > 0.9 # very high score
-        assert 1.0 == score_docs[0].vector_ratio
+        top_k = 3
+        doc_chunk_scores = index.search(query_string, top_k)
+        assert 1 == len(doc_chunk_scores)
+        assert doc_id1 == doc_chunk_scores[0].doc_id
+        assert doc_chunk_scores[0].score > 0.9 # very high score
 
         # add the second file
         doc_path2 = "./tests/testfiles/chatgpt.txt"
@@ -137,26 +136,25 @@ class TestVectorIndex:
 
         # search
         query_string = "A person is eating food."
-        top_k = 2
-        score_docs = index.search(query_string, top_k)
-        assert 2 == len(score_docs)
-        assert doc_id1 == score_docs[0].doc_id
-        assert doc_id2 == score_docs[1].doc_id
-        assert score_docs[0].score > 0.9 # doc1 has high score
-        assert score_docs[1].score < 0.5 # doc2 has low score
-        assert 1.0 == score_docs[0].vector_ratio
-        assert 1.0 == score_docs[1].vector_ratio
+        top_k = 3
+        doc_chunk_scores = index.search(query_string, top_k)
+        assert top_k == len(doc_chunk_scores)
+        assert doc_id1 == doc_chunk_scores[0].doc_id
+        assert doc_id2 == doc_chunk_scores[1].doc_id
+        assert doc_id2 == doc_chunk_scores[2].doc_id
+        assert doc_chunk_scores[0].score > 0.9 # doc1 has high score
+        assert doc_chunk_scores[1].score < 0.5 # doc2 has low score
+        assert doc_chunk_scores[1].score < 0.5 # doc2 has low score
 
         # search a unrelated string
         query_string = "a beautiful sky"
-        top_k = 2
-        score_docs = index.search(query_string, top_k)
-        assert 2 == len(score_docs)
-        # both doc1 and doc2 have low score
-        assert score_docs[0].score < 0.5
-        assert score_docs[1].score < 0.5
-        assert 1.0 == score_docs[0].vector_ratio
-        assert 1.0 == score_docs[1].vector_ratio
+        top_k = 3
+        doc_chunk_scores = index.search(query_string, top_k)
+        assert 3 == len(doc_chunk_scores)
+        # all doc chunks have low score
+        assert doc_chunk_scores[0].score < 0.5
+        assert doc_chunk_scores[1].score < 0.5
+        assert doc_chunk_scores[2].score < 0.5
 
 
     def test_save_load_index(self):
@@ -232,26 +230,25 @@ class TestVectorIndex:
 
         # search
         query_string = "A person is eating food."
-        top_k = 2
-        score_docs = index.search(query_string, top_k)
-        assert 2 == len(score_docs)
-        assert doc_id1 == score_docs[0].doc_id
-        assert doc_id2 == score_docs[1].doc_id
-        assert score_docs[0].score > 0.9 # doc1 has high score
-        assert score_docs[1].score < 0.5 # doc2 has low score
-        assert 1.0 == score_docs[0].vector_ratio
-        assert 1.0 == score_docs[1].vector_ratio
+        top_k = 3
+        doc_chunk_scores = index.search(query_string, top_k)
+        assert 3 == len(doc_chunk_scores)
+        assert doc_id1 == doc_chunk_scores[0].doc_id
+        assert doc_id2 == doc_chunk_scores[1].doc_id
+        assert doc_id2 == doc_chunk_scores[2].doc_id
+        assert doc_chunk_scores[0].score > 0.9 # doc1 has high score
+        assert doc_chunk_scores[1].score < 0.5 # doc2 has low score
+        assert doc_chunk_scores[2].score < 0.5 # doc2 has low score
 
         # search a unrelated string
         query_string = "a beautiful sky"
-        top_k = 2
-        score_docs = index.search(query_string, top_k)
-        assert 2 == len(score_docs)
-        # both doc1 and doc2 have low score
-        assert score_docs[0].score < 0.5
-        assert score_docs[1].score < 0.5
-        assert 1.0 == score_docs[0].vector_ratio
-        assert 1.0 == score_docs[1].vector_ratio
+        top_k = 3
+        doc_chunk_scores = index.search(query_string, top_k)
+        assert 3 == len(doc_chunk_scores)
+        # all doc chunks have low score
+        assert doc_chunk_scores[0].score < 0.5
+        assert doc_chunk_scores[1].score < 0.5
+        assert doc_chunk_scores[2].score < 0.5
 
         # cleanup
         shutil.rmtree(ut_dir)

@@ -7,7 +7,7 @@ from typing import List, Dict
 
 import tiktoken
 
-from index.docs import VLScoreDoc
+from index.docs import DocChunkScore
 from model.model import Model
 from model.factory import get_model
 from vectorstore.vectorstore import Space, VectorStore
@@ -18,7 +18,6 @@ DEFAULT_VECTOR_FILE_MAX_ELEMENTS = 5000 # The max elements in one vector file
 MIN_CHUNK_SIZE_CHARS = 350  # The minimum size of each text chunk in characters
 MIN_CHUNK_LENGTH_TO_EMBED = 5  # Discard chunks shorter than this
 EMBEDDINGS_BATCH_SIZE = 128 # The number of embeddings to request at a time
-MIN_TOP_K = 5 # The minimum top_k to query from the vector store
 
 # Global tokenizer
 default_tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -31,6 +30,7 @@ class ChunkMetadata(BaseModel):
     label: int # the label of the chunk embedding in the vector store
 
 
+# The id to uniquely define a document chunk in the vector index
 class ChunkId(BaseModel):
     doc_id: str
     offset: int
@@ -294,107 +294,52 @@ class VectorIndex:
         raise NotImplementedError
 
 
-    def search(self, query_string: str, top_k: int) -> List[VLScoreDoc]:
+    def search(self, query_string: str, top_k: int) -> List[DocChunkScore]:
         """
         Take a query string, get embedding for the query string, find the
         similar doc chunks in the store, calculate the scores and return the
-        top_k docs.
-        The score for a doc is calculated based on the distance to the query
-        string embedding. If multiple chunks within a doc are close to the
-        query string embedding, the doc's score is the sum of the scores of
-        those chunks.
+        top_k doc chunks.
+        The score for a doc chunk is calculated based on the distance to the
+        query string embedding.
 
-        Return the top-k docs, sorted in descending order based on the score.
-        Note: the returned docs may be less than top_k, as multiple chunks may
-        belong to one doc.
+        Return the top-k doc chunks, sorted in descending order based on score.
         """
         texts: List[str] = []
         texts.append(query_string)
         embeddings = self.model.get_embeddings(texts)
 
-        # multiple chunks may belong to one doc. adjust top_k to get enough
-        # neighbors from the vector store. TODO is there a better way?
-        k = top_k
-        if k < MIN_TOP_K:
-            k = MIN_TOP_K
-
         # check k with the current number of elements. Some store, such as
         # hnswlib, throws RuntimeError if k > elements.
-        if k > self.metadata.elements:
-            k = self.metadata.elements
+        if top_k > self.metadata.elements:
+            top_k = self.metadata.elements
 
         # query the vector store
-        labels, distances = self.store.query(embeddings, k)
+        labels, distances = self.store.query(embeddings, top_k)
 
         # convert distances to scores
-        if self.space == Space.l2:
-            doc_ids, scores = self._l2_distance_to_scores(
-                labels[0], distances[0])
-        else:
-            doc_ids, scores = self._ip_distance_to_scores(
-                labels[0], distances[0])
-
-        # sort in the descending order based on the score
-        score_docs: List[VLScoreDoc] = []
-        for i, doc_id in enumerate(doc_ids):
-            score_doc = VLScoreDoc(
-                doc_id=doc_id, score=scores[i], vector_ratio=1.0)
-            score_docs.append(score_doc)
-
-        score_docs.sort(key=lambda s:s.score, reverse=True)
-
-        return score_docs
+        return self._distance_to_scores(labels[0], distances[0])
 
 
-    def _l2_distance_to_scores(
+    def _distance_to_scores(
         self, labels: List[int], distances: List[float],
-    ) -> (List[str], List[float]):
-        """
-        Convert the l2 distances to the scores.
-        Return the list of doc ids and scores.
-        """
-        # For the L2 distance, lower distance means closer.
-        # Get the lowest distance for each doc.
-        # key: doc_id, value: the lowest distance for the chunk(s) of one doc
-        doc_distances: Dict[str, float] = {}
+    ) -> List[DocChunkScore]:
+        # Convert the distances to the scores in range (0, 1),
+        # higher score means closer.
+        chunk_scores: List[DocChunkScore] = []
         for i, label in enumerate(labels):
-            distance = distances[i]
+            if self.space == Space.l2:
+                # l2 distance, lower distance means closer
+                score = 1 / (1 + distances[i])
+            else:
+                # ip or cosine distance, higher distance means closer
+                score = (1 + distances[i]) / 2
 
+            # get the doc id for the chunk
             chunk_id = self.label_to_chunk_id[label]
-            # update distance if doc_id is not included or has lower distance
-            if (chunk_id.doc_id not in doc_distances) or \
-                (distance < doc_distances[chunk_id.doc_id]):
-                doc_distances[chunk_id.doc_id] = distance
 
-        # convert distances to scores
-        scores: List[float] = []
-        for distance in doc_distances.values():
-            scores.append(1 / (1 + distance))
+            chunk_score = DocChunkScore(
+                doc_id=chunk_id.doc_id, offset=chunk_id.offset,
+                length=chunk_id.length, score=score)
+            chunk_scores.append(chunk_score)
 
-        return doc_distances.keys(), scores
-
-
-    def _ip_distance_to_scores(
-        self, labels: List[int], distances: List[float],
-    ) -> (List[str], List[float]):
-        """
-        Convert the ip or cosine distances to the scores.
-        Return the list of doc ids and scores.
-        """
-        # For the ip or cosine distances, higher distance means closer.
-        # Get the highest distance for each doc.
-        # key: doc_id, value: the highest distance for the chunk(s) of one doc
-        doc_distances: Dict[str, float] = {}
-        for i, label in enumerate(labels):
-            distance = distances[i]
-            chunk_id = self.label_to_chunk_id[label]
-            if (chunk_id.doc_id not in doc_distances) or \
-                (distance > doc_distances[chunk_id.doc_id]):
-                doc_distances[chunk_id.doc_id] = distance
-
-        # convert distances to scores
-        scores: List[float] = []
-        for distance in doc_distances.values():
-            scores.append((1 + distance) / 2)
-
-        return doc_distances.keys(), scores
+        return chunk_scores

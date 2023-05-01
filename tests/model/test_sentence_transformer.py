@@ -1,4 +1,5 @@
 import os
+import logging
 import pytest
 import time
 from typing import List
@@ -11,17 +12,17 @@ class TestSentTransformerModel():
         """
         simple measure the latency of different models on a MacBook M1Pro.
         python3 -m pytest -s tests/model/test_sentence_transformer.py
-        default model load time: 1.4939462076872587
-        get embeddings time: 0.05871379096060991
-        all-mpnet-base-v2 model load time: 1.011457541026175
-        get embeddings time: 0.17692300025373697
+        default model load time: 1.4939462076872587s
+        get embeddings time: 0.05871379096060991s
+        all-mpnet-base-v2 model load time: 1.011457541026175s
+        get embeddings time: 0.17692300025373697s
         """
         start = time.monotonic()
         stmodel = get_model("sentence_transformer")
         assert 256 == stmodel.get_max_token_size()
         assert 384 == stmodel.get_dim()
         dur = time.monotonic() - start
-        print(f"\ndefault model load time: {dur}")
+        logging.info(f"\ndefault model load time: {dur}s")
 
         sentences = ['A person is eating food.',
                      'A person is eating a piece of bread.',
@@ -33,7 +34,7 @@ class TestSentTransformerModel():
         assert len(sentences) == len(embeddings)
         assert stmodel.get_dim() == len(embeddings[0])
         dur = time.monotonic() - start
-        print(f"get embeddings time: {dur}")
+        logging.info(f"get embeddings time: {dur}s")
 
         # https://huggingface.co/sentence-transformers/all-mpnet-base-v2
         start = time.monotonic()
@@ -41,14 +42,14 @@ class TestSentTransformerModel():
         assert 384 == stmodel.get_max_token_size()
         assert 768 == stmodel.get_dim()
         dur = time.monotonic() - start
-        print(f"all-mpnet-base-v2 model load time: {dur}")
+        logging.info(f"all-mpnet-base-v2 model load time: {dur}s")
 
         start = time.monotonic()
         embeddings = stmodel.get_embeddings(sentences)
         assert len(sentences) == len(embeddings)
         assert stmodel.get_dim() == len(embeddings[0])
         dur = time.monotonic() - start
-        print(f"get embeddings time: {dur}")
+        logging.info(f"get embeddings time: {dur}s")
 
     def test_unsupported_model(self):
         with pytest.raises(ValueError):

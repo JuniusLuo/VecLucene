@@ -14,7 +14,7 @@ from org.apache.lucene.queryparser.classic import QueryParser
 from org.apache.lucene.search import IndexSearcher, ScoreDoc, TermQuery
 from org.apache.lucene.store import FSDirectory
 
-from index.docs import VLScoreDoc
+from index.docs import DocChunkScore
 from index.vector_index import VectorIndex
 
 # the reserved field names for the doc
@@ -207,7 +207,9 @@ class Index:
                      f"vector_index_version={self.vector_index_version}")
 
 
-    def search(self, query_string: str, top_k: int) -> List[VLScoreDoc]:
+    def vector_search(
+        self, query_string: str, top_k: int,
+    ) -> List[DocChunkScore]:
         """
         Take the query string, search over the doc content (text) and return
         the top docs. The search will include both the traditional inverted
@@ -220,63 +222,18 @@ class Index:
         #   automatically search the query string over all invert/vector
         #   indexed fields, and search the specified field.
         # - support retrieving the specified fields.
-        # - support pagination search.
         # - etc.
 
-        # currently simply sum up the scores from the vector search and the
-        # lucene search.
+        doc_chunk_scores = self.vector_index.search(query_string, top_k)
 
-        # do vector search
-        vector_score_docs = self.vector_index.search(query_string, top_k)
-
-        # do traditional inverted search
-        lucene_score_docs = self._search_lucene(query_string, top_k)
-        if len(lucene_score_docs) == 0:
-            logging.debug(f"only find vector docs for query={query_string}, "
-                          f"{vector_score_docs}")
-            return vector_score_docs
-
-        # find docs in the inverted index, merge with the vector score docs
-        merged_score_docs: Dict[str, VLScoreDoc] = {}
-        # initialize with vector_score_docs
-        for score_doc in vector_score_docs:
-            merged_score_docs[score_doc.doc_id] = score_doc
-
-        for score_doc in lucene_score_docs:
-            # get doc id
-            doc = self.searcher.doc(score_doc.doc)
-            doc_id = doc.get(FIELD_DOC_ID)
-
-            if doc_id in merged_score_docs:
-                # vector search gets the same doc, sum up the scores
-                vl_score_doc = merged_score_docs[doc_id]
-                score = score_doc.score + vl_score_doc.score
-                vl_score_doc.vector_ratio = vl_score_doc.score / score
-                vl_score_doc.score = score
-                continue
-
-            # vector search does not get the doc, add it
-            vl_score_doc = VLScoreDoc(
-                doc_id=doc_id, score=score_doc.score, vector_ratio=0.0)
-            merged_score_docs[doc_id] = vl_score_doc
-
-        # sort by scores
-        score_docs: List[VLScoreDoc] = []
-        for score_doc in merged_score_docs.values():
-            score_docs.append(score_doc)
-
-        score_docs.sort(key=lambda s:s.score, reverse=True)
-
-        logging.debug("merge vector and lucene search docs for "
-                      f"query={query_string}, {score_docs}")
-
-        if len(score_docs) > top_k:
-            return score_docs[:top_k]
-
-        return score_docs
+        logging.debug(
+            f"vector search query=\'{query_string}\' docs={doc_chunk_scores}")
+        return doc_chunk_scores
 
 
-    def _search_lucene(self, query_string: str, top_k: int) -> List[ScoreDoc]:
+    def lucene_search(
+        self, query_string: str, top_k: int,
+    ) -> List[DocChunkScore]:
         # TODO support concurrent reads
         reader = DirectoryReader.openIfChanged(self.searcher.getIndexReader())
         if reader:
@@ -287,4 +244,19 @@ class Index:
         parser = QueryParser(FIELD_DOC_TEXT, analyzer)
         query = parser.parse(query_string)
 
-        return self.searcher.search(query, top_k).scoreDocs
+        lucene_score_docs = self.searcher.search(query, top_k).scoreDocs
+
+        doc_chunk_scores: List[DocChunkScore] = []
+        for score_doc in lucene_score_docs:
+            # get doc id
+            doc = self.searcher.doc(score_doc.doc)
+            doc_id = doc.get(FIELD_DOC_ID)
+
+            # TODO get the offset and length via TermVector or Highlighter
+            doc_chunk_score = DocChunkScore(
+                doc_id=doc_id, offset=0, length=0, score=score_doc.score)
+            doc_chunk_scores.append(doc_chunk_score)
+
+        logging.debug(
+            f"lucene search query=\'{query_string}\' docs={doc_chunk_scores}")
+        return doc_chunk_scores
