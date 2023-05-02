@@ -112,6 +112,11 @@ class TestVectorIndex:
 
         assert doc1_chunks+doc2_chunks == index.metadata.elements
         assert label1+doc2_chunks == index.metadata.last_label
+        # make sure the offsets are continuous
+        offset = 0
+        for chunk_meta in index.doc_id_to_metas[doc_id2]:
+            assert offset == chunk_meta.offset
+            offset += chunk_meta.length
 
         assert 2 == len(index.doc_id_to_metas)
         # verify doc1 metas

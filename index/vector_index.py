@@ -1,6 +1,5 @@
 import os
 import logging
-import numpy as np
 import pickle
 from pydantic import BaseModel
 from typing import List, Dict
@@ -46,8 +45,6 @@ class VectorIndex:
     store_dir: str # the dir where the index files will be stored
 
     # use openai cl100k_base as tokenizer.
-    # TODO support other tokenizers, such as NLTK. Note: NLTK could also split
-    # text to sentences.
     tokenizer: tiktoken.core.Encoding
 
     model: Model # the model to get the embeddings for text
@@ -156,8 +153,9 @@ class VectorIndex:
         # get embeddings for the doc text
         chunk_embeddings, chunk_metas = self._get_embeddings(doc_path)
 
-        logging.debug(f"get {len(chunk_embeddings)} embeddings for "
-                      f"doc {doc_id}, last_label={self.metadata.last_label}")
+        logging.info(
+            f"get {len(chunk_embeddings)} embeddings for doc path={doc_path} "
+            f"id={doc_id}, last_label={self.metadata.last_label}")
 
         if len(chunk_embeddings) == 0:
             # doc has no content, return
@@ -204,24 +202,53 @@ class VectorIndex:
         chunk_metas: List[ChunkMetadata] = []
 
         # read the whole file. TODO support pagination for large files.
-        with open(doc_path, "rb") as f:
-            text = f.read().decode("utf-8")
+        with open(doc_path, mode="r", encoding="utf-8") as f:
+            text = f.read()
 
         # return an empty list if the text is empty or whitespace
         if not text or text.isspace():
             return chunk_embeddings, chunk_metas
 
-        # tokenize the text        
-        tokens = self.tokenizer.encode(text, disallowed_special=())
+        # split the doc text to chunks
+        chunk_token_size = self.model.get_max_token_size()
+        chunk_texts, chunk_metas = self._get_text_chunks(
+            doc_path, text, chunk_token_size, MIN_CHUNK_SIZE_CHARS)
+
+        # get embeddings for all chunks
+        for i in range(0, len(chunk_texts), EMBEDDINGS_BATCH_SIZE):
+            batch_texts = chunk_texts[i:i+EMBEDDINGS_BATCH_SIZE]
+
+            embeddings = self.model.get_embeddings(batch_texts)
+
+            chunk_embeddings.extend(embeddings)
+
+        return chunk_embeddings, chunk_metas
+
+
+    def _get_text_chunks(
+        self,
+        doc_path: str, # the doc path, for logging
+        text: str, # the doc text
+        chunk_token_size: int, # the number of tokens in one chunk
+        min_chunk_chars: int, # the minimum size of each text chunk in chars
+    ) -> (List[str], List[ChunkMetadata]):
+        """
+        Split the text into chunks.
+        Return a list of texts and metadadatas for all chunks in the text.
+        """
+        chunk_texts: List[str] = []
+        chunk_metas: List[ChunkMetadata] = []
+
+        # tokenize the text
+        # according to tiktoken/core.py, "encode_ordinary is equivalent to
+        # `encode(text, disallowed_special=())` (but slightly faster)."
+        tokens = self.tokenizer.encode_ordinary(text)
 
         # loop until all tokens are consumed or the max elements are reached
-        chunk_size = self.model.get_max_token_size()
-        num_chunks = 0
         offset = 0
-        batch_chunk_texts: List[str] = []
-        while tokens and num_chunks < DEFAULT_VECTOR_FILE_MAX_ELEMENTS:
+        while tokens:
             # take the next chunk
-            chunk = tokens[:chunk_size]
+            chunk = tokens[:chunk_token_size]
 
             # decode to text to check whitespace and sentence boundary
             chunk_text = self.tokenizer.decode(chunk)
@@ -229,62 +256,77 @@ class VectorIndex:
             # skip the chunk if it is empty or whitespace
             if not chunk_text or chunk_text.isspace():
                 # remove from the remaining tokens
-                tokens = tokens[len(chunk) :]
+                tokens = tokens[len(chunk):]
                 # increase the offset
                 offset += len(chunk_text)
                 continue
 
-            # truncate the chunk text to the last complete sentence
-            last_sentence = max(
+            # truncate chunk_text to the last complete sentence (punctation).
+            # TODO support other languages, maybe consider such as NLTK.
+            last_punc = max(
                 chunk_text.rfind("."),
                 chunk_text.rfind("?"),
                 chunk_text.rfind("!"),
                 chunk_text.rfind("\n"),
             )
-            if last_sentence != -1 and last_sentence > MIN_CHUNK_SIZE_CHARS:
-                chunk_text = chunk_text[: last_sentence + 1]
+            if last_punc != -1 and last_punc > min_chunk_chars:
+                chunk_text = chunk_text[:last_punc+1]
 
-            # get the original chunk text length
-            chunk_org_len = len(chunk_text)
+            chunk_text_len = len(chunk_text)
+
+            # adjust the chunk_text_len if needed.
+            # check if some text in the last token is skipped. For example,
+            # cl100k_base takes '."[' as one token. If two sentences have this
+            # string, 'This sentence."[1] Next sentence.', and "This sentence."
+            # is the last sentence, the next offset will not align with tokens,
+            # e.g. the next offset will point to the first char in '"[1',
+            # while, the decoded text of the next token is '1'.
+            chunk_tokens = self.tokenizer.encode_ordinary(chunk_text)
+            last_chunk_token = len(chunk_tokens) - 1
+            if chunk_tokens[last_chunk_token] != tokens[last_chunk_token]:
+                # align chunk_text_len with the last token
+                last_token_text = self.tokenizer.decode(
+                    chunk_tokens[last_chunk_token:])
+
+                token_text = self.tokenizer.decode(
+                    tokens[last_chunk_token:last_chunk_token+1])
+
+                chunk_text_len += len(token_text) - len(last_token_text)
+
+                logging.debug(f"align last_token_text={last_token_text} "
+                              f"token_text={token_text}")
+
+            logging.debug(f"offset={offset} chunk_text_len={chunk_text_len}")
+
+            # sanity check
+            if text[offset:offset+10] != chunk_text[:10]:
+                logging.warning(f"doc_path={doc_path} offset={offset},"
+                                f"text chars={text[offset:offset+10]}"
+                                f"chunk chars={chunk_text[:20]}")
+                raise Exception(
+                    f"text and chunk not aligned, {doc_path} offset={offset}")
+
             # remove any newline characters and strip any leading or trailing
-            # whitespaces
+            # whitespaces. Not needed if use NLTK.
             chunk_text_to_append = chunk_text.replace("\n", " ").strip()
             if len(chunk_text_to_append) > MIN_CHUNK_LENGTH_TO_EMBED:
-                # append the chunk text to the list of chunks
-                batch_chunk_texts.append(chunk_text_to_append)
-                # add to chunk_metas
+                # add the chunk text
+                chunk_texts.append(chunk_text_to_append)
+
+                # add the chunk meta
                 chunk_metas.append(ChunkMetadata(
                     offset=offset,
-                    length=chunk_org_len,
-                    label=0,
+                    length=chunk_text_len,
+                    label=0, # initial 0 label, will be assigned later
                 ))
-                    
 
             # increase the offset
-            offset += chunk_org_len
+            offset += chunk_text_len
 
-            # remove the chunk text tokens from the remaining tokens
-            start = len(self.tokenizer.encode(chunk_text, disallowed_special=()))
-            tokens = tokens[start :]
+            # remove the chunk text tokens from the remaining tokens.
+            tokens = tokens[last_chunk_token+1:]
 
-            # increment the number of chunks
-            num_chunks += 1
-
-            # get embeddings for one batch
-            if len(batch_chunk_texts) >= batch_size:
-                embeddings = self.model.get_embeddings(batch_chunk_texts)
-                # add to chunk_embeddings
-                chunk_embeddings.extend(embeddings)
-                # clear the batch
-                batch_chunk_texts.clear()
-
-        # handle the last batch
-        if len(batch_chunk_texts) > 0:
-            embeddings = self.model.get_embeddings(batch_chunk_texts)
-            # add to chunk_embeddings
-            chunk_embeddings.extend(embeddings)
-
-        return chunk_embeddings, chunk_metas
+        return chunk_texts, chunk_metas
 
 
     def delete(self, doc_id: str):
