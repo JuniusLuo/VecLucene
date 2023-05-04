@@ -6,9 +6,7 @@ import time
 from typing import List
 import shutil
 
-from org.apache.lucene.analysis.standard import StandardAnalyzer
-from org.apache.lucene.document import Field, StringField
-
+from index.docs import DocField, DocFields
 from index.index import Index
 
 class TestSentenceTransformerWithIndex:
@@ -29,17 +27,17 @@ class IndexAndSearchTest:
 
         lucene.initVM(vmargs=['-Djava.awt.headless=true'])
 
-        analyzer = StandardAnalyzer()
-        index = Index(ut_dir, analyzer, model_name, vector_store)
+        index = Index(ut_dir, model_name, vector_store)
 
         try:
             # step1: add the first file
             doc_path1 = "./tests/testfiles/single_sentence.txt"
-            fields: List[Field] = []
-            pathField = StringField("path", doc_path1, Field.Store.YES)
+            fields: List[DocField] = []
+            pathField = DocField(name="path", string_value=doc_path1)
             fields.append(pathField)
+            doc_fields = DocFields(fields=fields)
 
-            doc_id1 = index.add(doc_path1, fields)
+            doc_id1 = index.add(doc_path1, doc_fields)
 
             # search lucene
             query_string = "A person is eating food."
@@ -68,10 +66,11 @@ class IndexAndSearchTest:
             # step2: add the second file
             doc_path2 = "./tests/testfiles/chatgpt.txt"
             fields.clear()
-            pathField = StringField("path", doc_path2, Field.Store.YES)
+            pathField = DocField(name="path", string_value=doc_path2)
             fields.append(pathField)
+            doc_fields = DocFields(fields=fields)
 
-            doc_id2 = index.add(doc_path2, fields)
+            doc_id2 = index.add(doc_path2, doc_fields)
 
             # search lucene only
             query_string = "A person is eating food."
@@ -117,7 +116,7 @@ class IndexAndSearchTest:
             index.close()
 
             # step3: reload index
-            index = Index(ut_dir, analyzer, model_name, vector_store)
+            index = Index(ut_dir, model_name, vector_store)
             assert 2 == index.vector_index_version
 
             # search lucene only

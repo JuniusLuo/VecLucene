@@ -5,7 +5,7 @@ from typing import List
 import uuid
 
 from java.nio.file import Files, Path
-from org.apache.lucene.analysis import Analyzer
+from org.apache.lucene.analysis.standard import StandardAnalyzer
 from org.apache.lucene.document import \
     Document, Field, StringField, TextField, StoredField
 from org.apache.lucene.index import \
@@ -14,7 +14,7 @@ from org.apache.lucene.queryparser.classic import QueryParser
 from org.apache.lucene.search import IndexSearcher, ScoreDoc, TermQuery
 from org.apache.lucene.store import FSDirectory
 
-from index.docs import DocChunkScore
+from index.docs import DocField, DocFields, DocChunkScore
 from index.vector_index import VectorIndex
 
 # the reserved field names for the doc
@@ -54,7 +54,6 @@ class Index:
     def __init__(
         self,
         index_dir: str,
-        analyzer: Analyzer,
         model_provider: str,
         vector_store: str,
     ):
@@ -68,6 +67,8 @@ class Index:
         vector_dir = os.path.join(index_dir, SUBDIR_VECTOR)
         if not os.path.exists(vector_dir):
             os.mkdir(vector_dir)
+
+        analyzer = StandardAnalyzer()
 
         # initialize the IndexWriter for Lucene
         fs_dir = FSDirectory.open(Path.of(lucene_dir))
@@ -123,13 +124,42 @@ class Index:
         logging.info("Close the index")
 
 
-    def add(self, doc_path: str, fields: List[Field]) -> str:
+    # TODO not support async. The underline vector lib, such as hnswlib,
+    # does not support concurrent writes. Lucene supports concurrent writes
+    # using multiple writers, and merge the segments in the background.
+    def add(self, doc_path: str, doc_fields: DocFields) -> str:
         """
         Add a doc to the index. The doc file must be a plain text file.
         This function automatically generates the embeddings for the doc text.
         
         Return the document id.
         """
+        # convert DocFields to Lucene fields
+        fields = self._convert_to_lucene_fields(doc_fields)
+
+        return self._add(doc_path, fields)
+
+
+    def _convert_to_lucene_fields(self, doc_fields: DocFields) -> List[Field]:
+        fields: List[Field] = []
+        if doc_fields is None:
+            return fields
+
+        for doc_field in doc_fields.fields:
+            field: Field = None
+            if doc_field.string_value is not None:
+                field = StringField(
+                    doc_field.name, doc_field.string_value, Field.Store.YES)
+            if doc_field.numeric_value is not None:
+                field = StoredField(doc_field.name, doc_field.numeric_value)
+            if doc_field.float_value is not None:
+                field = StoredField(doc_field.name, doc_field.float_value)
+            fields.append(field)
+
+        return fields
+
+
+    def _add(self, doc_path: str, fields: List[Field]) -> str:
         # TODO support only a limited number of docs, e.g. less than
         # vector_index.DEFAULT_VECTOR_FILE_MAX_ELEMENTS. One vector index
         # element is one doc chunk.
@@ -147,6 +177,7 @@ class Index:
                 doc_id = field.stringValue()
                 break
 
+        # TODO if doc_id is passed in, check doc_id does not exist
         if doc_id == "":
             doc_id = str(uuid.uuid4())
             fields.append(StringField(FIELD_DOC_ID, doc_id, Field.Store.YES))
@@ -243,6 +274,8 @@ class Index:
         analyzer = self.writer.getConfig().getAnalyzer()
         parser = QueryParser(FIELD_DOC_TEXT, analyzer)
         query = parser.parse(query_string)
+
+        logging.debug(f"parse query string: {query_string}, to {query}")
 
         lucene_score_docs = self.searcher.search(query, top_k).scoreDocs
 
