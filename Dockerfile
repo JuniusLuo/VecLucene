@@ -33,10 +33,8 @@ RUN apt-get install -y build-essential
 WORKDIR /code/pylucene
 RUN wget -O - https://downloads.apache.org/lucene/pylucene/pylucene-9.4.1-src.tar.gz \
 	| tar -xz --strip-components=1
-#RUN ls /usr/lib/jvm
-#RUN python -c 'import platform; print(platform.machine())'
 RUN cd jcc \
-    && JCC_JDK=/usr/lib/jvm/temurin-17-jdk-arm64 python setup.py build install
+    && JCC_JDK=/usr/lib/jvm/$(ls /usr/lib/jvm) python setup.py build install
 RUN make all install JCC='python -m jcc --shared' PYTHON=python NUM_FILES=16
 #RUN make all test install JCC='python -m jcc --shared' PYTHON=python NUM_FILES=16
 
