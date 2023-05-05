@@ -34,7 +34,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--op", type=str, required=True)
     parser.add_argument("--host", type=str, default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--file", type=str)
     parser.add_argument("--query", type=str)
     args = parser.parse_args()
@@ -59,16 +59,4 @@ if __name__ == '__main__':
 
         case _:
             print("supported op: upload, commit, query")
-
-
-
-#url = 'http://127.0.0.1:8000/add_doc'
-#upload_file(url, "tests/testfiles/single_sentence.txt")
-#upload_file_with_fields(url, "tests/testfiles/single_sentence.txt")
-
-#url = 'http://127.0.0.1:8000/commit'
-#commit(url)
-
-#url = 'http://127.0.0.1:8000/query'
-#query(url, "A person is eating food")
 

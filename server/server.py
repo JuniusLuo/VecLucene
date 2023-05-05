@@ -4,7 +4,6 @@ import logging
 import lucene
 import mimetypes
 import os
-import pathlib
 from typing import Optional
 import sys
 import uvicorn
@@ -123,8 +122,7 @@ async def save_file_text(file: UploadFile) -> str:
     # TODO support other type file, extract the text from the file.
     # TODO for small files, directly store in Lucene.
     doc_path = os.path.join(index_doc_dir, file.filename)
-    parent_path = pathlib.Path(doc_path).parent
-    parent_path.mkdir(parents=True, exist_ok=True)
+    os.makedirs(os.path.dirname(doc_path), exist_ok=True)
 
     file_stream = await file.read()
 
