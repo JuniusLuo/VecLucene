@@ -20,3 +20,23 @@ VecLucene retains all of Lucene's existing abilities. The application can define
 Furthermore, the text is indexed in Lucene using the traditional inverted index format. The application can choose to use either type of search or even perform a hybrid search by combining the results of both inverted index search and ANN search. Inverted index search is generally faster, while ANN search provides a better understanding of semantic relationships.
 
 ## Install
+VecLucene is built on top of PyLucene-9.4.1. Please follow the instructions in the [PyLucene Install guide](https://lucene.apache.org/pylucene/install.html) to install PyLucene. Note that after building jcc, you will need to edit Makefile to set "PYTHON", "JCC" and "NUM_FILES" for your platform. Please make sure you have installed JDK and GCC before building PyLucene.
+
+The Python packages for VecLucene are managed by Poetry. You can use the "poetry export" command to create a requirements file and then install the packages with pip.
+
+The Dockerfile is a good reference for how to build VecLucene.
+
+## Usage
+Once you have installed VecLucene, you can start it as an HTTP server by running `python main.py`. You can use the `example/cli.py` file to upload files, commit them, and query the server.
+
+If you prefer, you can skip the installation process and use the pre-built Docker container:
+1. Pull the docker image using `docker pull junius/veclucene-arm64`. For the amd64 platform, pull `junius/veclucene-amd64`.
+2. Run the container using `docker run -d --name vltest -p 127.0.0.1:8080:8080 junius/veclucene-arm64`, which uses the SetenceTransformer `all-MiniLM-L6-v2` model. To use ChatGPT, run `docker run -d --env ENV_EMBEDDING_MODEL_PROVIDER=openai_embedding --env OPENAI_API_KEY=xxx --name vltest -p 127.0.0.1:8080:8080 junius/veclucene-arm64`
+3. Use `python3 example/cli.py --op upload --file path/to/localfile` and `python3 example/cli.py --op query --query_string "xxx" --query_type "vector"` to upload files and query the server. To use the traditional inverted search, use `--query_type "lucene"`. Don't forget to run `python3 example/cli.py --op commit` before stopping the container to ensure that the index is committed and can be queried again later.
+
+Note: the container is quite large, with a size of 4.34GB for arm64 and 8.46GB for amd64. The installed python packages for amd64 are much larger than arm64, not sure why. We could explore ways to reduce the size, such as using PyInstaller to pack it into an executable binary.
+
+Please note that VecLucene is still at an early stage and has limited abilities:
+1. It only supports plain text files.
+2. It is limited to 5000 embeddings.
+3. The vector search does not parse the query string yet, e.g. simply generate the embedding from the entire query string. For the inverted search, the query string is parsed using Lucene parser.
