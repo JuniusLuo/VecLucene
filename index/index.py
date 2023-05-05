@@ -91,7 +91,8 @@ class Index:
             # load the existing vectors
             self.vector_index.load(self.vector_index_version)
 
-        logging.info(f"Initialize the index {index_dir}, "
+        logging.info(f"Initialize the index index_dir={index_dir} "
+                     f"model={model_provider} vector_store={vector_store} "
                      f"vector_index_version={self.vector_index_version}")
 
 

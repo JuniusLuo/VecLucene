@@ -14,7 +14,8 @@ from server.api import QueryType, QueryRequest, QueryResponse
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
-# The embedding model provider: openai_embedding, sentence_transformer
+# The embedding model provider: openai_embedding, sentence_transformer.
+# If model is set to openai_embedding, please remember to set OPENAI_API_KEY.
 ENV_EMBEDDING_MODEL_PROVIDER = os.environ.get("ENV_EMBEDDING_MODEL_PROVIDER")
 # The directory to store the lucene and vector index
 ENV_INDEX_DIR = os.environ.get("ENV_INDEX_DIR")
