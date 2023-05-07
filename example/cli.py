@@ -42,7 +42,8 @@ if __name__ == '__main__':
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--file", type=str)
     parser.add_argument("--query_string", type=str)
-    parser.add_argument("--query_type", type=str, default="vector")
+    parser.add_argument("--query_type", type=str, default="vector",
+                        choices=["vector", "lucene"])
     args = parser.parse_args()
 
     url = f"http://{args.host}:{args.port}"

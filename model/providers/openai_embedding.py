@@ -1,5 +1,5 @@
 from typing import List
-import openai
+from openai import Embedding
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from model.model import Model
@@ -34,7 +34,7 @@ class OpenAIEmbeddingModel(Model):
         Takes in a list of texts and returns a list of embeddings for each text.
         """
         # Call the OpenAI API to get the embeddings
-        response = openai.Embedding.create(input=texts, model=self.model_name) 
+        response = Embedding.create(input=texts, model=self.model_name)
 
         # Extract the embedding data from the response
         data = response["data"]  # type: ignore

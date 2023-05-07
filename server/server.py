@@ -25,9 +25,10 @@ DEFAULT_INDEX_DIR = "./server_index_dir"
 
 embedding_model = DEFAULT_EMBEDDING_MODEL_PROVIDER
 index_dir = DEFAULT_INDEX_DIR
-if ENV_EMBEDDING_MODEL_PROVIDER is not None:
+if ENV_EMBEDDING_MODEL_PROVIDER is not None \
+    and ENV_EMBEDDING_MODEL_PROVIDER != "":
     embedding_model = ENV_EMBEDDING_MODEL_PROVIDER
-if ENV_INDEX_DIR is not None:
+if ENV_INDEX_DIR is not None and ENV_INDEX_DIR != "":
     index_dir = ENV_INDEX_DIR
 
 # the sub directory under index_dir to store the doc content

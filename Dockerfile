@@ -2,11 +2,20 @@
 # get the required python packages
 FROM python:3.11-slim as requirements-stage
 
-WORKDIR /tmp
+ARG BUILD_GPT
+
+WORKDIR /tmp/poetry
 
 RUN pip install poetry
 
-COPY ./pyproject.toml ./poetry.lock /tmp/
+COPY ./pyproject.toml ./poetry.lock /tmp/poetry
+COPY ./pyproject-gpt.toml ./poetry-gpt.lock /tmp/poetry
+
+RUN if [ ! -z "$BUILD_GPT" ]; then \
+		mv pyproject-gpt.toml pyproject.toml && mv poetry-gpt.lock poetry.lock; \
+	else \
+		rm -f pyproject-gpt.toml poetry-gpt.lock; \
+	fi
 
 RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
 
@@ -14,12 +23,14 @@ RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
 # build
 FROM python:3.11-slim
 
+ARG BUILD_GPT
+
 # 1. build pylucene
 # building on mac, default jdk does not work for JCC on aarch64/arm64,
 # pylucene-9.4.1/jcc/setup.py line 197, LFLAGS does not have linux/aarch64.
 #RUN apt-get update && apt-get install -y default-jdk
 
-# https://adoptium.net/blog/2021/12/eclipse-temurin-linux-installers-available/
+# https://lucene.apache.org/pylucene/jcc/install.html suggests installing temurin java
 RUN apt-get update && apt-get install -y wget apt-transport-https gnupg
 RUN wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | apt-key add -
 RUN echo "deb https://packages.adoptium.net/artifactory/deb \
@@ -46,8 +57,10 @@ RUN rm -rf pylucene
 WORKDIR /code/VecLucene
 COPY . /code/VecLucene/
 
-COPY --from=requirements-stage /tmp/requirements.txt /code/VecLucene/requirements.txt
+COPY --from=requirements-stage /tmp/poetry/requirements.txt /code/VecLucene/requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /code/VecLucene/requirements.txt
+
+ENV ENV_EMBEDDING_MODEL_PROVIDER=${BUILD_GPT:+openai_embedding}
 
 EXPOSE 8080
 
